@@ -1,51 +1,61 @@
-use rocket::fs::NamedFile;
-use rocket::futures::executor::block_on;
-use rocket::data::{Data, ToByteUnit};
-use rocket::tokio;
-use std::fs::File;
 use std::path::Path;
-
-#[macro_use] extern crate rocket;
+use actix_web::{get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest};
+use actix_files::NamedFile;
 
 #[get("/")]
-fn index() -> &'static str {
-    "Hello from the Streetpass Server!!"
+async fn index() -> impl Responder {
+    HttpResponse::Ok().body("Hello from the Streetpass Server!!")
 }
 
 #[get("/version")]
-fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+async fn version() -> impl Responder {
+    HttpResponse::Ok().body(env!("CARGO_PKG_VERSION"))
 }
 
-#[get("/<titleid>/download")]
-fn download(titleid: String) -> Result<NamedFile, std::io::Error> {
+#[get("/{titleid}/download")]
+async fn download(path: web::Path<String>) -> Result<NamedFile> {
+    let titleid = path.into_inner();
     println!("Title ID is {}", titleid);
     let path = "./sp-data/".to_owned() + &titleid + "/NT9DANjYeugA=";
-    block_on(NamedFile::open(path))
+    Ok(NamedFile::open(path)?)
 }
 
-#[post("/<id>/<titleid>/upload", data = "<data>")]
-async fn upload(id: String, titleid: String, data: Data<'_>) -> std::io::Result<()> {
+#[post("/{id}/{titleid}/upload")]
+async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRequest) -> impl Responder {
+    let (id, titleid) = path.into_inner();
+
     println!("Console ID is {}", id);
     println!("Title ID is {}", titleid);
 
-    let path = id + "/" + &titleid;
+    let path = String::from("./sp-data/") + &id + "/" + &titleid;
 
     if !Path::new(&path).exists() {
         std::fs::create_dir_all(Path::new(&path)).unwrap();
     }
 
-    let f = File::create(path + "/msg.bin").unwrap();
-    let tokio_f = tokio::fs::File::from_std(f);
+    println!("Body {:?}", body);
+    println!("Headers {:?}", req.headers());
 
-    data.open(512.kibibytes())
-        .stream_to(tokio_f)
-        .await?;
+    //let f = File::create(path + "/msg.bin").unwrap();
+    //let tokio_f = tokio::fs::File::from_std(f);
+//
+    //data.open(512.kibibytes())
+    //    .stream_to(tokio_f)
+    //    .await?;
 
-    Ok(())
+    HttpResponse::Ok()
 }
 
-#[launch]
-fn rocket() -> _ {
-    rocket::build().mount("/", routes![index, version, download, upload])
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(|| {
+        App::new()
+            .service(index)
+            .service(version)
+            .service(download)
+            .service(upload)
+    })
+    .bind(("127.0.0.1", 8000))?
+    .run()
+    .await
 }
