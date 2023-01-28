@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, fs::File, io::Write};
 use actix_web::{get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest};
 use actix_files::NamedFile;
 
@@ -20,34 +20,32 @@ async fn download(path: web::Path<String>) -> Result<NamedFile> {
     Ok(NamedFile::open(path)?)
 }
 
-#[post("/{id}/{titleid}/upload")]
+#[post("/{titleid}/upload/{filename}")]
 async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRequest) -> impl Responder {
-    let (id, titleid) = path.into_inner();
+    let (titleid, filename) = path.into_inner();
+
+    let id = req.headers().get("3ds-id").unwrap().to_str().unwrap();
 
     println!("Console ID is {}", id);
     println!("Title ID is {}", titleid);
+    println!("Filename is {}", filename);
 
-    let path = String::from("./sp-data/") + &id + "/" + &titleid;
+    let folder_path = String::from("./sp-data/") + &titleid + "/" + &id;
 
-    if !Path::new(&path).exists() {
-        std::fs::create_dir_all(Path::new(&path)).unwrap();
+    if !Path::new(&folder_path).exists() {
+        std::fs::create_dir_all(Path::new(&folder_path)).unwrap();
     }
 
-    println!("Body {:?}", body);
-    println!("Headers {:?}", req.headers());
+    let mut f = File::create(folder_path + "/" + &filename).unwrap();
 
-    //let f = File::create(path + "/msg.bin").unwrap();
-    //let tokio_f = tokio::fs::File::from_std(f);
-//
-    //data.open(512.kibibytes())
-    //    .stream_to(tokio_f)
-    //    .await?;
+    f.write_all(&body).unwrap();
 
     HttpResponse::Ok()
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    println!("Starting server at http://localhost:8000");
     HttpServer::new(|| {
         App::new()
             .service(index)
@@ -55,7 +53,7 @@ async fn main() -> std::io::Result<()> {
             .service(download)
             .service(upload)
     })
-    .bind(("127.0.0.1", 8000))?
+    .bind(("0.0.0.0", 8000))?
     .run()
     .await
 }
