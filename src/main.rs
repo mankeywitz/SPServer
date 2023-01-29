@@ -1,6 +1,7 @@
-use std::{path::Path, fs::File, io::Write};
-use actix_web::{get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest};
+use std::{path::Path, fs::{File, ReadDir, DirEntry}, io::Write};
+use actix_web::{error, get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest, http::header::HeaderValue};
 use actix_files::NamedFile;
+use rand::seq::IteratorRandom;
 
 #[get("/")]
 async fn index() -> impl Responder {
@@ -13,11 +14,44 @@ async fn version() -> impl Responder {
 }
 
 #[get("/{titleid}/download")]
-async fn download(path: web::Path<String>) -> Result<NamedFile> {
+async fn download(path: web::Path<String>, req: HttpRequest) -> Result<NamedFile> {
     let titleid = path.into_inner();
+    let defaultId = HeaderValue::from_static("");
+    let console_id = req.headers().get("3ds-id").unwrap_or(&defaultId).to_str().unwrap();
     println!("Title ID is {}", titleid);
-    let path = "./sp-data/".to_owned() + &titleid + "/NT9DANjYeugA=";
-    Ok(NamedFile::open(path)?)
+    println!("Console ID is {}", console_id);
+
+    let title_path = Path::new("./sp-data").join(&titleid);
+
+    if title_path.try_exists().is_err() {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
+    }
+
+    if title_path.try_exists().unwrap() == false {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
+    }
+
+    let console_paths = std::fs::read_dir(title_path).unwrap();
+
+    let filtered_paths: Vec<DirEntry> = console_paths.filter(|p| {
+        p.as_ref().unwrap().file_name() != console_id
+    }).map(|p| {
+        p.unwrap()
+    }).collect();
+
+    if filtered_paths.len() == 0 {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
+    }
+
+    let mut message_paths = std::fs::read_dir(filtered_paths[0].path()).unwrap();
+
+    // todo - better message file selection
+    let message_path = message_paths.next().unwrap().unwrap().path();
+
+    Ok(NamedFile::open(message_path)?)
 }
 
 #[post("/{titleid}/upload/{filename}")]
