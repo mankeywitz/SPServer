@@ -16,8 +16,12 @@ async fn version() -> impl Responder {
 #[get("/{titleid}/download")]
 async fn download(path: web::Path<String>, req: HttpRequest) -> Result<NamedFile> {
     let titleid = path.into_inner();
-    let defaultId = HeaderValue::from_static("");
-    let console_id = req.headers().get("3ds-id").unwrap_or(&defaultId).to_str().unwrap();
+    let console_id = match req.headers().get("3ds-id") {
+        Some(id) => id.to_str().unwrap(),
+        None => {
+            return Err(error::ErrorBadRequest("Console ID not provided"))
+        }
+    };
     println!("Title ID is {}", titleid);
     println!("Console ID is {}", console_id);
 
@@ -46,6 +50,8 @@ async fn download(path: web::Path<String>, req: HttpRequest) -> Result<NamedFile
         return Err(error::ErrorNotFound("No files found"));
     }
 
+    println!("{:?}", filtered_paths);
+
     let mut message_paths = std::fs::read_dir(filtered_paths[0].path()).unwrap();
 
     // todo - better message file selection
@@ -55,16 +61,21 @@ async fn download(path: web::Path<String>, req: HttpRequest) -> Result<NamedFile
 }
 
 #[post("/{titleid}/upload/{filename}")]
-async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRequest) -> impl Responder {
+async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRequest) -> Result<impl Responder> {
     let (titleid, filename) = path.into_inner();
 
-    let id = req.headers().get("3ds-id").unwrap().to_str().unwrap();
+    let console_id = match req.headers().get("3ds-id") {
+        Some(id) => id.to_str().unwrap(),
+        None => {
+            return Err(error::ErrorBadRequest("Console ID not provided"))
+        }
+    };
 
-    println!("Console ID is {}", id);
+    println!("Console ID is {}", console_id);
     println!("Title ID is {}", titleid);
     println!("Filename is {}", filename);
 
-    let folder_path = String::from("./sp-data/") + &titleid + "/" + &id;
+    let folder_path = String::from("./sp-data/") + &titleid + "/" + &console_id;
 
     if !Path::new(&folder_path).exists() {
         std::fs::create_dir_all(Path::new(&folder_path)).unwrap();
@@ -74,7 +85,7 @@ async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRe
 
     f.write_all(&body).unwrap();
 
-    HttpResponse::Ok()
+    Ok(HttpResponse::Ok())
 }
 
 #[actix_web::main]
