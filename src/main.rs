@@ -2,6 +2,7 @@ use std::{path::Path, fs::{File, ReadDir, DirEntry}, io::Write};
 use actix_web::{error, get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest, http::header::HeaderValue};
 use actix_files::NamedFile;
 use rand::seq::IteratorRandom;
+use clap::{Command, arg, value_parser};
 
 #[get("/")]
 async fn index() -> impl Responder {
@@ -90,7 +91,13 @@ async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRe
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Starting server at http://localhost:8000");
+    let matches = Command::new("Wonderpass Server")
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(arg!(--port <PORT>).value_parser(value_parser!(u16)).default_value("8000"))
+        .get_matches();
+    let port = matches.get_one::<u16>("port").unwrap();
+    
+    println!("Starting server at http://localhost:{}", port);
     HttpServer::new(|| {
         App::new()
             .service(index)
@@ -98,7 +105,7 @@ async fn main() -> std::io::Result<()> {
             .service(download)
             .service(upload)
     })
-    .bind(("0.0.0.0", 8000))?
+    .bind(("0.0.0.0", *port))?
     .run()
     .await
 }
