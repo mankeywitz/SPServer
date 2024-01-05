@@ -1,51 +1,111 @@
-use rocket::fs::NamedFile;
-use rocket::futures::executor::block_on;
-use rocket::data::{Data, ToByteUnit};
-use rocket::tokio;
-use std::fs::File;
-use std::path::Path;
-
-#[macro_use] extern crate rocket;
+use std::{path::Path, fs::{File, ReadDir, DirEntry}, io::Write};
+use actix_web::{error, get, post, web, Responder, Result, HttpServer, App, HttpResponse, HttpRequest, http::header::HeaderValue};
+use actix_files::NamedFile;
+use rand::seq::IteratorRandom;
+use clap::{Command, arg, value_parser};
 
 #[get("/")]
-fn index() -> &'static str {
-    "Hello from the Streetpass Server!!"
+async fn index() -> impl Responder {
+    HttpResponse::Ok().body("Hello from the Streetpass Server!!")
 }
 
 #[get("/version")]
-fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+async fn version() -> impl Responder {
+    HttpResponse::Ok().body(env!("CARGO_PKG_VERSION"))
 }
 
-#[get("/<titleid>/download")]
-fn download(titleid: String) -> Result<NamedFile, std::io::Error> {
+#[get("/{titleid}/download")]
+async fn download(path: web::Path<String>, req: HttpRequest) -> Result<NamedFile> {
+    let titleid = path.into_inner();
+    let console_id = match req.headers().get("3ds-id") {
+        Some(id) => id.to_str().unwrap(),
+        None => {
+            return Err(error::ErrorBadRequest("Console ID not provided"))
+        }
+    };
     println!("Title ID is {}", titleid);
-    let path = "./sp-data/".to_owned() + &titleid + "/NT9DANjYeugA=";
-    block_on(NamedFile::open(path))
-}
+    println!("Console ID is {}", console_id);
 
-#[post("/<id>/<titleid>/upload", data = "<data>")]
-async fn upload(id: String, titleid: String, data: Data<'_>) -> std::io::Result<()> {
-    println!("Console ID is {}", id);
-    println!("Title ID is {}", titleid);
+    let title_path = Path::new("./sp-data").join(&titleid);
 
-    let path = id + "/" + &titleid;
-
-    if !Path::new(&path).exists() {
-        std::fs::create_dir_all(Path::new(&path)).unwrap();
+    if title_path.try_exists().is_err() {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
     }
 
-    let f = File::create(path + "/msg.bin").unwrap();
-    let tokio_f = tokio::fs::File::from_std(f);
+    if title_path.try_exists().unwrap() == false {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
+    }
 
-    data.open(512.kibibytes())
-        .stream_to(tokio_f)
-        .await?;
+    let console_paths = std::fs::read_dir(title_path).unwrap();
 
-    Ok(())
+    let filtered_paths: Vec<DirEntry> = console_paths.filter(|p| {
+        p.as_ref().unwrap().file_name() != console_id
+    }).map(|p| {
+        p.unwrap()
+    }).collect();
+
+    if filtered_paths.len() == 0 {
+        println!("No files available for {}", &titleid);
+        return Err(error::ErrorNotFound("No files found"));
+    }
+
+    println!("{:?}", filtered_paths);
+
+    let mut message_paths = std::fs::read_dir(filtered_paths[0].path()).unwrap();
+
+    // todo - better message file selection
+    let message_path = message_paths.next().unwrap().unwrap().path();
+
+    Ok(NamedFile::open(message_path)?)
 }
 
-#[launch]
-fn rocket() -> _ {
-    rocket::build().mount("/", routes![index, version, download, upload])
+#[post("/{titleid}/upload/{filename}")]
+async fn upload(path: web::Path<(String, String)>, body: web::Bytes, req: HttpRequest) -> Result<impl Responder> {
+    let (titleid, filename) = path.into_inner();
+
+    let console_id = match req.headers().get("3ds-id") {
+        Some(id) => id.to_str().unwrap(),
+        None => {
+            return Err(error::ErrorBadRequest("Console ID not provided"))
+        }
+    };
+
+    println!("Console ID is {}", console_id);
+    println!("Title ID is {}", titleid);
+    println!("Filename is {}", filename);
+
+    let folder_path = String::from("./sp-data/") + &titleid + "/" + &console_id;
+
+    if !Path::new(&folder_path).exists() {
+        std::fs::create_dir_all(Path::new(&folder_path)).unwrap();
+    }
+
+    let mut f = File::create(folder_path + "/" + &filename).unwrap();
+
+    f.write_all(&body).unwrap();
+
+    Ok(HttpResponse::Ok())
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let matches = Command::new("Wonderpass Server")
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(arg!(--port <PORT>).value_parser(value_parser!(u16)).default_value("8000"))
+        .get_matches();
+    let port = matches.get_one::<u16>("port").unwrap();
+    
+    println!("Starting server at http://localhost:{}", port);
+    HttpServer::new(|| {
+        App::new()
+            .service(index)
+            .service(version)
+            .service(download)
+            .service(upload)
+    })
+    .bind(("0.0.0.0", *port))?
+    .run()
+    .await
 }
